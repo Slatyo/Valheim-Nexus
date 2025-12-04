@@ -1,143 +1,104 @@
-using System;
-using Jotunn.Entities;
-using Jotunn.Managers;
+using Munin;
 
 namespace Nexus.Commands
 {
     /// <summary>
-    /// Console commands for Nexus
+    /// Console commands for Nexus via Munin.
+    /// Usage: munin nexus [command]
     /// </summary>
     public static class NexusCommands
     {
         public static void Register()
         {
-            // nexus - Show status
-            CommandManager.Instance.AddConsoleCommand(new NexusStatusCommand());
+            Command.RegisterMany("nexus",
+                new CommandConfig
+                {
+                    Name = "status",
+                    Description = "Show Nexus network optimizer status",
+                    Permission = PermissionLevel.Anyone,
+                    Handler = args =>
+                    {
+                        var lines = new System.Collections.Generic.List<string>
+                        {
+                            $"<color=#{ChatColor.Gold}>Nexus Network Optimizer</color>",
+                            $"Version: {Plugin.PluginVersion}",
+                            $"Connected: {(ZNet.instance != null ? "Yes" : "No")}"
+                        };
 
-            // nexus_test - Run diagnostics
-            CommandManager.Instance.AddConsoleCommand(new NexusTestCommand());
+                        if (Plugin.ConfigManager != null)
+                        {
+                            lines.Add($"Send Limit: {Plugin.ConfigManager.SendRateLimit.Value} bytes/s");
+                            lines.Add($"Compression: {(Plugin.ConfigManager.EnableCompression.Value ? "Enabled" : "Disabled")}");
+                            lines.Add($"Update Rate: {Plugin.ConfigManager.DefaultUpdateRate.Value}%");
+                        }
 
-            // nexus_report - Show last test report
-            CommandManager.Instance.AddConsoleCommand(new NexusReportCommand());
+                        if (Plugin.NetworkStats != null)
+                        {
+                            lines.Add($"Quality Score: {Plugin.NetworkStats.QualityScore}/100");
+                        }
 
-            // nexus_stats - Toggle stats overlay
-            CommandManager.Instance.AddConsoleCommand(new NexusStatsCommand());
+                        return CommandResult.Info(string.Join("\n", lines));
+                    }
+                },
+                new CommandConfig
+                {
+                    Name = "test",
+                    Description = "Run a 5-second network performance test",
+                    Permission = PermissionLevel.Admin,
+                    Handler = args =>
+                    {
+                        if (Plugin.Diagnostics == null)
+                            return CommandResult.Error("Diagnostics not available");
 
-            Plugin.Log.LogInfo("Nexus console commands registered");
+                        if (Plugin.Diagnostics.Status == Network.NetworkDiagnostics.TestStatus.Running)
+                            return CommandResult.Info("Test already running...");
+
+                        if (Plugin.Diagnostics.StartTest())
+                        {
+                            return CommandResult.Success("Starting network performance test (5 seconds)...\nUse 'munin nexus report' to view results when complete.");
+                        }
+
+                        return CommandResult.Error("Failed to start test. Make sure you're connected to a server.");
+                    }
+                },
+                new CommandConfig
+                {
+                    Name = "report",
+                    Description = "Show the last network test report",
+                    Permission = PermissionLevel.Anyone,
+                    Handler = args =>
+                    {
+                        if (Plugin.Diagnostics == null)
+                            return CommandResult.Error("Diagnostics not available");
+
+                        if (Plugin.Diagnostics.Status == Network.NetworkDiagnostics.TestStatus.Running)
+                        {
+                            float progress = Plugin.Diagnostics.TestProgress * 100f;
+                            return CommandResult.Info($"Test in progress... {progress:F0}%");
+                        }
+
+                        return CommandResult.Info(Plugin.Diagnostics.GetReport());
+                    }
+                },
+                new CommandConfig
+                {
+                    Name = "stats",
+                    Description = "Toggle the network stats overlay",
+                    Permission = PermissionLevel.Anyone,
+                    Handler = args =>
+                    {
+                        UI.DebugOverlay.Toggle();
+                        return CommandResult.Success($"Stats overlay: {(UI.DebugOverlay.IsVisible ? "Shown" : "Hidden")}");
+                    }
+                }
+            );
+
+            Plugin.Log.LogInfo("Nexus commands registered with Munin");
         }
-    }
 
-    /// <summary>
-    /// Show Nexus status
-    /// </summary>
-    public class NexusStatusCommand : ConsoleCommand
-    {
-        public override string Name => "nexus";
-        public override string Help => "Show Nexus network optimizer status";
-
-        public override void Run(string[] args)
+        public static void Unregister()
         {
-            Console.instance.Print("=== Nexus Network Optimizer ===");
-            Console.instance.Print($"Version: {Plugin.PluginVersion}");
-            Console.instance.Print($"Connected: {(ZNet.instance != null ? "Yes" : "No")}");
-
-            if (Plugin.ConfigManager != null)
-            {
-                Console.instance.Print($"Send Limit: {Plugin.ConfigManager.SendRateLimit.Value} bytes/s");
-                Console.instance.Print($"Compression: {(Plugin.ConfigManager.EnableCompression.Value ? "Enabled" : "Disabled")}");
-                Console.instance.Print($"Update Rate: {Plugin.ConfigManager.DefaultUpdateRate.Value}%");
-            }
-
-            if (Plugin.NetworkStats != null)
-            {
-                Console.instance.Print($"Quality Score: {Plugin.NetworkStats.QualityScore}/100");
-            }
-
-            Console.instance.Print("");
-            Console.instance.Print("Commands:");
-            Console.instance.Print("  nexus_test  - Run network performance test");
-            Console.instance.Print("  nexus_report - Show last test results");
-            Console.instance.Print("  nexus_stats - Toggle stats overlay");
-        }
-    }
-
-    /// <summary>
-    /// Run network diagnostics test
-    /// </summary>
-    public class NexusTestCommand : ConsoleCommand
-    {
-        public override string Name => "nexus_test";
-        public override string Help => "Run a 5-second network performance test";
-
-        public override void Run(string[] args)
-        {
-            if (Plugin.Diagnostics == null)
-            {
-                Console.instance.Print("Diagnostics not available");
-                return;
-            }
-
-            if (Plugin.Diagnostics.Status == Network.NetworkDiagnostics.TestStatus.Running)
-            {
-                Console.instance.Print("Test already running...");
-                return;
-            }
-
-            if (Plugin.Diagnostics.StartTest())
-            {
-                Console.instance.Print("Starting network performance test (5 seconds)...");
-                Console.instance.Print("Use 'nexus_report' to view results when complete.");
-            }
-            else
-            {
-                Console.instance.Print("Failed to start test. Make sure you're connected to a server.");
-            }
-        }
-    }
-
-    /// <summary>
-    /// Show last test report
-    /// </summary>
-    public class NexusReportCommand : ConsoleCommand
-    {
-        public override string Name => "nexus_report";
-        public override string Help => "Show the last network test report";
-
-        public override void Run(string[] args)
-        {
-            if (Plugin.Diagnostics == null)
-            {
-                Console.instance.Print("Diagnostics not available");
-                return;
-            }
-
-            if (Plugin.Diagnostics.Status == Network.NetworkDiagnostics.TestStatus.Running)
-            {
-                float progress = Plugin.Diagnostics.TestProgress * 100f;
-                Console.instance.Print($"Test in progress... {progress:F0}%");
-                return;
-            }
-
-            string report = Plugin.Diagnostics.GetReport();
-            foreach (var line in report.Split('\n'))
-            {
-                Console.instance.Print(line);
-            }
-        }
-    }
-
-    /// <summary>
-    /// Toggle stats overlay
-    /// </summary>
-    public class NexusStatsCommand : ConsoleCommand
-    {
-        public override string Name => "nexus_stats";
-        public override string Help => "Toggle the network stats overlay";
-
-        public override void Run(string[] args)
-        {
-            UI.DebugOverlay.Toggle();
-            Console.instance.Print($"Stats overlay: {(UI.DebugOverlay.IsVisible ? "Shown" : "Hidden")}");
+            Command.UnregisterMod("nexus");
         }
     }
 }

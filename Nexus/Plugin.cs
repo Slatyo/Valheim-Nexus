@@ -11,6 +11,7 @@ namespace Nexus
 {
     [BepInPlugin(PluginGUID, PluginName, PluginVersion)]
     [BepInDependency(Jotunn.Main.ModGuid)]
+    [BepInDependency("com.slaty.munin")]
     [NetworkCompatibility(CompatibilityLevel.EveryoneMustHaveMod, VersionStrictness.Minor)]
     public class Plugin : BaseUnityPlugin
     {
@@ -62,7 +63,7 @@ namespace Nexus
 
             Log.LogInfo($"{PluginName} v{PluginVersion} loaded successfully");
             Log.LogInfo($"Press {ConfigManager.OverlayToggleKey.Value} to toggle network stats overlay");
-            Log.LogInfo("Type 'nexus' in console for commands");
+            Log.LogInfo("Type 'munin nexus' in console for commands");
         }
 
         private void Update()
@@ -74,6 +75,7 @@ namespace Nexus
         private void OnDestroy()
         {
             _harmony?.UnpatchSelf();
+            NexusCommands.Unregister();
             DebugOverlay.Destroy();
             BandwidthManager?.Cleanup();
             CompressionManager?.Cleanup();
