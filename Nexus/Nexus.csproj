@@ -54,6 +54,10 @@
       <HintPath>$(MOD_DEPLOYPATH)\Munin\Munin.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="Veneer">
+      <HintPath>$(MOD_DEPLOYPATH)\Veneer\Veneer.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
   </ItemGroup>
 
   <PropertyGroup>

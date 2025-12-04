@@ -2,45 +2,49 @@ using System;
 using System.Text;
 using Nexus.Network;
 using UnityEngine;
+using UnityEngine.UI;
+using Veneer.Components.Base;
+using Veneer.Components.Composite;
+using Veneer.Components.Primitives;
+using Veneer.Core;
+using Veneer.Theme;
 
 namespace Nexus.UI
 {
     /// <summary>
-    /// In-game debug overlay to display network statistics
-    /// Toggle with configurable key (default F2)
+    /// In-game debug overlay to display network statistics using Veneer UI framework.
+    /// Toggle with configurable key (default F6).
     /// </summary>
     public class DebugOverlay : MonoBehaviour
     {
         private static DebugOverlay _instance;
         private bool _visible;
-        private Rect _windowRect;
-        private GUIStyle _windowStyle;
-        private GUIStyle _labelStyle;
-        private GUIStyle _headerStyle;
-        private GUIStyle _valueStyle;
-        private GUIStyle _buttonStyle;
-        private GUIStyle _resultGoodStyle;
-        private GUIStyle _resultBadStyle;
-        private bool _stylesInitialized;
 
-        // Update interval for stats
+        // Veneer UI
+        private VeneerFrame _frame;
+        private VeneerTabBar _tabBar;
+
+        // Stats tab
+        private GameObject _statsContent;
+        private VeneerText _bandwidthStats;
+        private VeneerText _compressionStats;
+        private VeneerText _queueStats;
+        private VeneerText _qualityStats;
+        private VeneerText _zdoStats;
+
+        // Test tab
+        private GameObject _testContent;
+        private VeneerText _testStatus;
+        private VeneerBar _testProgressBar;
+        private VeneerButton _runTestButton;
+        private VeneerText _testResultsText;
+
         private float _lastUpdate;
         private const float UpdateInterval = 0.5f;
-
-        // Cached stats strings
-        private string _bandwidthStats = "";
-        private string _compressionStats = "";
-        private string _queueStats = "";
-        private string _qualityStats = "";
-        private string _zdoStats = "";
-        private string _testStatus = "";
-        private bool _showTestResults = false;
-        private Vector2 _scrollPosition;
 
         public static void Create()
         {
             if (_instance != null) return;
-
             var go = new GameObject("NexusDebugOverlay");
             DontDestroyOnLoad(go);
             _instance = go.AddComponent<DebugOverlay>();
@@ -57,9 +61,12 @@ namespace Nexus.UI
 
         public static void Toggle()
         {
-            if (_instance != null)
+            if (_instance == null) return;
+            _instance._visible = !_instance._visible;
+            if (_instance._frame != null)
             {
-                _instance._visible = !_instance._visible;
+                if (_instance._visible) _instance._frame.Show();
+                else _instance._frame.Hide();
             }
         }
 
@@ -67,351 +74,353 @@ namespace Nexus.UI
 
         private void Awake()
         {
-            _windowRect = new Rect(10, 10, 350, 480);
             _visible = false;
+            if (VeneerAPI.IsReady) CreateUI();
+            else VeneerAPI.OnReady += CreateUI;
+        }
+
+        private void OnDestroy()
+        {
+            VeneerAPI.OnReady -= CreateUI;
+            if (_frame != null) UnityEngine.Object.Destroy(_frame.gameObject);
+        }
+
+        private void CreateUI()
+        {
+            // Compact window
+            _frame = VeneerAPI.CreateWindow("nexus_stats", "Nexus Network", 280, 360);
+            _frame.OnCloseClicked += () => { _visible = false; _frame.Hide(); };
+            _frame.SetPadding(2, 2, 2, 2);
+            _frame.Hide();
+
+            var content = _frame.Content;
+            content.gameObject.AddComponent<RectMask2D>();
+
+            // Stats panel (create before tab bar to avoid null reference)
+            _statsContent = new GameObject("StatsContent", typeof(RectTransform));
+            _statsContent.transform.SetParent(content, false);
+            SetupContentRect(_statsContent.GetComponent<RectTransform>());
+            CreateStatsPanel(_statsContent.transform);
+
+            // Test panel
+            _testContent = new GameObject("TestContent", typeof(RectTransform));
+            _testContent.transform.SetParent(content, false);
+            SetupContentRect(_testContent.GetComponent<RectTransform>());
+            CreateTestPanel(_testContent.transform);
+            _testContent.SetActive(false);
+
+            // Tab bar (create after content panels exist)
+            _tabBar = VeneerTabBar.Create(content, 22f);
+            _tabBar.RectTransform.anchorMin = new Vector2(0, 1);
+            _tabBar.RectTransform.anchorMax = new Vector2(1, 1);
+            _tabBar.RectTransform.pivot = new Vector2(0.5f, 1);
+            _tabBar.RectTransform.anchoredPosition = Vector2.zero;
+            _tabBar.RectTransform.sizeDelta = new Vector2(0, 22f);
+            _tabBar.AddTabs(("stats", "Stats", 50f), ("test", "Test", 50f));
+            _tabBar.OnTabSelected += OnTabSelected;
+            _tabBar.SelectFirst();
+
+            Plugin.Log?.LogInfo("[Nexus] Debug overlay created with Veneer");
+        }
+
+        private void SetupContentRect(RectTransform rect)
+        {
+            rect.anchorMin = Vector2.zero;
+            rect.anchorMax = Vector2.one;
+            rect.offsetMin = new Vector2(0, 0);
+            rect.offsetMax = new Vector2(0, -24f);
+        }
+
+        private void OnTabSelected(string tab)
+        {
+            _statsContent.SetActive(tab == "stats");
+            _testContent.SetActive(tab == "test");
+        }
+
+        private void CreateStatsPanel(Transform parent)
+        {
+            // Scrollable area
+            var scroll = CreateScrollView(parent);
+
+            // Layout
+            var layout = scroll.content.gameObject.AddComponent<VerticalLayoutGroup>();
+            layout.childControlHeight = false;
+            layout.childControlWidth = true;
+            layout.childForceExpandWidth = true;
+            layout.spacing = 0f;
+            layout.padding = new RectOffset(4, 4, 2, 2);
+
+            var fitter = scroll.content.gameObject.AddComponent<ContentSizeFitter>();
+            fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+            // Stat sections - compact
+            _bandwidthStats = CreateStatRow(scroll.content, "Bandwidth", 48f);
+            _compressionStats = CreateStatRow(scroll.content, "Compression", 48f);
+            _queueStats = CreateStatRow(scroll.content, "Queue", 36f);
+            _qualityStats = CreateStatRow(scroll.content, "Connection", 48f);
+            _zdoStats = CreateStatRow(scroll.content, "ZDO", 36f);
+        }
+
+        private VeneerText CreateStatRow(RectTransform parent, string label, float valueHeight)
+        {
+            // Header
+            var header = VeneerText.Create(parent, label);
+            header.ApplyStyle(TextStyle.Header);
+            header.TextColor = VeneerColors.TextGold;
+            header.FontSize = VeneerConfig.GetScaledFontSize(10);
+            var hl = header.gameObject.AddComponent<LayoutElement>();
+            hl.preferredHeight = 14f;
+
+            // Value
+            var value = VeneerText.Create(parent, "...");
+            value.TextColor = VeneerColors.Success;
+            value.FontSize = VeneerConfig.GetScaledFontSize(9);
+            var vl = value.gameObject.AddComponent<LayoutElement>();
+            vl.preferredHeight = valueHeight;
+
+            return value;
+        }
+
+        private void CreateTestPanel(Transform parent)
+        {
+            var layout = parent.gameObject.AddComponent<VerticalLayoutGroup>();
+            layout.childControlHeight = false;
+            layout.childControlWidth = true;
+            layout.childForceExpandWidth = true;
+            layout.spacing = 4f;
+            layout.padding = new RectOffset(4, 4, 4, 4);
+
+            // Status
+            _testStatus = VeneerText.Create(parent, "Run test to analyze connection.");
+            _testStatus.TextColor = VeneerColors.Text;
+            _testStatus.FontSize = VeneerConfig.GetScaledFontSize(10);
+            var sl = _testStatus.gameObject.AddComponent<LayoutElement>();
+            sl.preferredHeight = 16f;
+
+            // Progress bar
+            _testProgressBar = VeneerBar.Create(parent, "nexus_prog", 180, 12);
+            var pl = _testProgressBar.gameObject.AddComponent<LayoutElement>();
+            pl.preferredHeight = 16f;
+            _testProgressBar.SetValues(0, 1);
+            _testProgressBar.Hide();
+
+            // Button (use default style - Primary has text color bug)
+            _runTestButton = VeneerButton.Create(parent, "Run Test (5s)", OnRunTest);
+            _runTestButton.SetSize(120, 24);
+            var bl = _runTestButton.gameObject.AddComponent<LayoutElement>();
+            bl.preferredHeight = 26f;
+
+            // Results label
+            var resultsLabel = VeneerText.Create(parent, "Results");
+            resultsLabel.ApplyStyle(TextStyle.Header);
+            resultsLabel.TextColor = VeneerColors.TextGold;
+            resultsLabel.FontSize = VeneerConfig.GetScaledFontSize(10);
+            var rl = resultsLabel.gameObject.AddComponent<LayoutElement>();
+            rl.preferredHeight = 14f;
+
+            // Results text
+            _testResultsText = VeneerText.Create(parent, "No results");
+            _testResultsText.TextColor = VeneerColors.TextMuted;
+            _testResultsText.FontSize = VeneerConfig.GetScaledFontSize(9);
+            var tl = _testResultsText.gameObject.AddComponent<LayoutElement>();
+            tl.minHeight = 120f;
+        }
+
+        private void OnRunTest()
+        {
+            var diag = Plugin.Diagnostics;
+            if (diag != null && diag.Status != NetworkDiagnostics.TestStatus.Running)
+                diag.StartTest();
+        }
+
+        private ScrollRect CreateScrollView(Transform parent)
+        {
+            var scrollGo = new GameObject("Scroll", typeof(RectTransform));
+            scrollGo.transform.SetParent(parent, false);
+            var scrollRt = scrollGo.GetComponent<RectTransform>();
+            scrollRt.anchorMin = Vector2.zero;
+            scrollRt.anchorMax = Vector2.one;
+            scrollRt.offsetMin = Vector2.zero;
+            scrollRt.offsetMax = Vector2.zero;
+
+            var scroll = scrollGo.AddComponent<ScrollRect>();
+            scroll.horizontal = false;
+            scroll.vertical = true;
+            scroll.movementType = ScrollRect.MovementType.Clamped;
+            scroll.scrollSensitivity = 12f;
+
+            var vpGo = new GameObject("Viewport", typeof(RectTransform));
+            vpGo.transform.SetParent(scrollGo.transform, false);
+            var vpRt = vpGo.GetComponent<RectTransform>();
+            vpRt.anchorMin = Vector2.zero;
+            vpRt.anchorMax = Vector2.one;
+            vpRt.offsetMin = Vector2.zero;
+            vpRt.offsetMax = Vector2.zero;
+            vpGo.AddComponent<RectMask2D>();
+            scroll.viewport = vpRt;
+
+            var contentGo = new GameObject("Content", typeof(RectTransform));
+            contentGo.transform.SetParent(vpGo.transform, false);
+            var contentRt = contentGo.GetComponent<RectTransform>();
+            contentRt.anchorMin = new Vector2(0, 1);
+            contentRt.anchorMax = new Vector2(1, 1);
+            contentRt.pivot = new Vector2(0.5f, 1);
+            contentRt.sizeDelta = new Vector2(0, 0);
+            scroll.content = contentRt;
+
+            return scroll;
         }
 
         private void Update()
         {
-            // Check for toggle key
-            KeyCode toggleKey = GetToggleKey();
-            if (Input.GetKeyDown(toggleKey))
+            if (Input.GetKeyDown(GetToggleKey()))
             {
                 _visible = !_visible;
-                Plugin.Log?.LogInfo($"[Nexus] Debug overlay {(_visible ? "shown" : "hidden")}");
+                if (_frame != null)
+                {
+                    if (_visible) _frame.Show();
+                    else _frame.Hide();
+                }
             }
 
-            // Update stats periodically when visible
             if (_visible && Time.time - _lastUpdate > UpdateInterval)
             {
                 _lastUpdate = Time.time;
                 UpdateStats();
+                UpdateTest();
             }
         }
 
         private KeyCode GetToggleKey()
         {
-            // Get from config or default to F6
-            string keyName = Plugin.ConfigManager?.OverlayToggleKey?.Value ?? "F6";
-            if (Enum.TryParse<KeyCode>(keyName, true, out var key))
-            {
-                return key;
-            }
-            return KeyCode.F6;
+            var key = Plugin.ConfigManager?.OverlayToggleKey?.Value ?? "F6";
+            return Enum.TryParse<KeyCode>(key, true, out var k) ? k : KeyCode.F6;
         }
 
         private void UpdateStats()
         {
+            if (_bandwidthStats == null) return;
             var sb = new StringBuilder();
 
-            // Bandwidth stats
-            sb.Clear();
+            // Bandwidth
             if (Plugin.BandwidthManager != null)
             {
                 var bw = Plugin.BandwidthManager;
-                sb.AppendLine($"Send Rate: {FormatBytes(bw.GetCurrentSendRate())}/s");
-                sb.AppendLine($"Recv Rate: {FormatBytes(bw.GetCurrentReceiveRate())}/s");
-                sb.AppendLine($"Total Sent: {FormatBytes(bw.TotalBytesSent)}");
-                sb.AppendLine($"Total Recv: {FormatBytes(bw.TotalBytesReceived)}");
-                sb.AppendLine($"Send Limit: {FormatBytes(Plugin.ConfigManager?.SendRateLimit?.Value ?? 0)}/s");
+                sb.AppendLine($"Send: {Fmt(bw.GetCurrentSendRate())}/s");
+                sb.AppendLine($"Recv: {Fmt(bw.GetCurrentReceiveRate())}/s");
+                sb.Append($"Limit: {Fmt(Plugin.ConfigManager?.SendRateLimit?.Value ?? 0)}/s");
             }
-            else
-            {
-                sb.AppendLine("Not available");
-            }
-            _bandwidthStats = sb.ToString();
+            else sb.Append("N/A");
+            _bandwidthStats.Content = sb.ToString();
 
-            // Compression stats
+            // Compression
             sb.Clear();
             if (Plugin.CompressionManager != null)
             {
                 var cm = Plugin.CompressionManager;
-                sb.AppendLine($"Enabled: {(Plugin.ConfigManager?.EnableCompression?.Value ?? false)}");
-                sb.AppendLine($"Threshold: {Plugin.ConfigManager?.CompressionThreshold?.Value ?? 0} bytes");
-                sb.AppendLine($"Packets Compressed: {cm.PacketsCompressed}");
-                sb.AppendLine($"Bytes Saved: {FormatBytes(cm.GetBytesSaved())}");
-                sb.AppendLine($"Avg Ratio: {cm.GetCompressionRatio():P1}");
+                sb.AppendLine($"On: {Plugin.ConfigManager?.EnableCompression?.Value ?? false}");
+                sb.AppendLine($"Saved: {Fmt(cm.GetBytesSaved())}");
+                sb.Append($"Ratio: {cm.GetCompressionRatio():P0}");
             }
-            else
-            {
-                sb.AppendLine("Not available");
-            }
-            _compressionStats = sb.ToString();
+            else sb.Append("N/A");
+            _compressionStats.Content = sb.ToString();
 
-            // Queue stats
+            // Queue
             sb.Clear();
             if (Plugin.QueueManager != null)
             {
                 var qm = Plugin.QueueManager;
-                sb.AppendLine($"Active Connections: {qm.ConnectionCount}");
-                sb.AppendLine($"Total Queued: {FormatBytes(qm.CurrentQueueSize)}");
-                sb.AppendLine($"Max Queue Size: {FormatBytes(Plugin.ConfigManager?.MaxQueueSize?.Value ?? 0)}");
+                sb.AppendLine($"Conns: {qm.ConnectionCount}");
+                sb.Append($"Queued: {Fmt(qm.CurrentQueueSize)}");
             }
-            else
-            {
-                sb.AppendLine("Not available");
-            }
-            _queueStats = sb.ToString();
+            else sb.Append("N/A");
+            _queueStats.Content = sb.ToString();
 
-            // Quality stats
+            // Quality
             sb.Clear();
             if (Plugin.NetworkStats != null)
             {
                 var ns = Plugin.NetworkStats;
-                sb.AppendLine($"Quality Score: {ns.QualityScore}/100");
-                sb.AppendLine($"Avg Ping: {ns.PingAverage:F1} ms");
-                sb.AppendLine($"Packet Loss: {ns.PacketLossPercent:F1}%");
+                sb.AppendLine($"Score: {ns.QualityScore}/100");
+                sb.AppendLine($"Ping: {ns.PingAverage:F0}ms");
+                sb.Append($"Loss: {ns.PacketLossPercent:F1}%");
             }
-            else
-            {
-                sb.AppendLine("Not available");
-            }
-            _qualityStats = sb.ToString();
+            else sb.Append("N/A");
+            _qualityStats.Content = sb.ToString();
 
-            // ZDO stats
+            // ZDO
             sb.Clear();
-            var zdoman = ZDOMan.instance;
-            if (zdoman != null)
+            var zdo = ZDOMan.instance;
+            if (zdo != null)
             {
-                sb.AppendLine($"ZDO Count: {zdoman.m_objectsByID?.Count ?? 0}");
-                sb.AppendLine($"Update Rate: {Plugin.ConfigManager?.DefaultUpdateRate?.Value ?? 100}%");
-                sb.AppendLine($"Auto Adjust: {(Plugin.ConfigManager?.AutoAdjustUpdateRate?.Value ?? false)}");
+                sb.AppendLine($"Count: {zdo.m_objectsByID?.Count ?? 0}");
+                sb.Append($"Rate: {Plugin.ConfigManager?.DefaultUpdateRate?.Value ?? 100}%");
             }
-            else
-            {
-                sb.AppendLine("Not in game");
-            }
-            _zdoStats = sb.ToString();
+            else sb.Append("Not in game");
+            _zdoStats.Content = sb.ToString();
         }
 
-        private void InitStyles()
+        private void UpdateTest()
         {
-            if (_stylesInitialized) return;
+            if (_testStatus == null || !_testContent.activeSelf) return;
 
-            _windowStyle = new GUIStyle(GUI.skin.window)
-            {
-                padding = new RectOffset(10, 10, 20, 10)
-            };
-
-            _headerStyle = new GUIStyle(GUI.skin.label)
-            {
-                fontStyle = FontStyle.Bold,
-                fontSize = 13,
-                normal = { textColor = new Color(1f, 0.85f, 0.4f) }
-            };
-
-            _labelStyle = new GUIStyle(GUI.skin.label)
-            {
-                fontSize = 12,
-                normal = { textColor = Color.white }
-            };
-
-            _valueStyle = new GUIStyle(GUI.skin.label)
-            {
-                fontSize = 12,
-                normal = { textColor = new Color(0.7f, 1f, 0.7f) }
-            };
-
-            _buttonStyle = new GUIStyle(GUI.skin.button)
-            {
-                fontSize = 12,
-                fontStyle = FontStyle.Bold
-            };
-
-            _resultGoodStyle = new GUIStyle(GUI.skin.label)
-            {
-                fontSize = 12,
-                fontStyle = FontStyle.Bold,
-                normal = { textColor = new Color(0.4f, 1f, 0.4f) }
-            };
-
-            _resultBadStyle = new GUIStyle(GUI.skin.label)
-            {
-                fontSize = 12,
-                fontStyle = FontStyle.Bold,
-                normal = { textColor = new Color(1f, 0.4f, 0.4f) }
-            };
-
-            _stylesInitialized = true;
-        }
-
-        private void OnGUI()
-        {
-            if (!_visible) return;
-
-            InitStyles();
-
-            _windowRect = GUI.Window(
-                94857, // Unique window ID
-                _windowRect,
-                DrawWindow,
-                "Nexus Network Stats",
-                _windowStyle
-            );
-        }
-
-        private void DrawWindow(int windowId)
-        {
-            GUILayout.BeginVertical();
-
-            // Tab buttons
-            GUILayout.BeginHorizontal();
-            if (GUILayout.Button(_showTestResults ? "Stats" : "[Stats]", _buttonStyle, GUILayout.Width(80)))
-            {
-                _showTestResults = false;
-            }
-            if (GUILayout.Button(_showTestResults ? "[Test]" : "Test", _buttonStyle, GUILayout.Width(80)))
-            {
-                _showTestResults = true;
-            }
-            GUILayout.FlexibleSpace();
-            GUILayout.EndHorizontal();
-            GUILayout.Space(5);
-
-            if (_showTestResults)
-            {
-                DrawTestTab();
-            }
-            else
-            {
-                DrawStatsTab();
-            }
-
-            GUILayout.FlexibleSpace();
-
-            // Footer
-            GUILayout.Label($"Press {Plugin.ConfigManager?.OverlayToggleKey?.Value ?? "F6"} to close", _labelStyle);
-
-            GUILayout.EndVertical();
-
-            // Make window draggable
-            GUI.DragWindow(new Rect(0, 0, 10000, 20));
-        }
-
-        private void DrawStatsTab()
-        {
-            // Bandwidth Section
-            GUILayout.Label("Bandwidth", _headerStyle);
-            GUILayout.Label(_bandwidthStats, _valueStyle);
-            GUILayout.Space(5);
-
-            // Compression Section
-            GUILayout.Label("Compression", _headerStyle);
-            GUILayout.Label(_compressionStats, _valueStyle);
-            GUILayout.Space(5);
-
-            // Queue Section
-            GUILayout.Label("Queue", _headerStyle);
-            GUILayout.Label(_queueStats, _valueStyle);
-            GUILayout.Space(5);
-
-            // Quality Section
-            GUILayout.Label("Connection Quality", _headerStyle);
-            GUILayout.Label(_qualityStats, _valueStyle);
-            GUILayout.Space(5);
-
-            // ZDO Section
-            GUILayout.Label("ZDO Sync", _headerStyle);
-            GUILayout.Label(_zdoStats, _valueStyle);
-        }
-
-        private void DrawTestTab()
-        {
             var diag = Plugin.Diagnostics;
             if (diag == null)
             {
-                GUILayout.Label("Diagnostics not available", _labelStyle);
+                _testStatus.Content = "Unavailable";
                 return;
             }
 
-            // Test controls
-            GUILayout.Label("Performance Test", _headerStyle);
-            GUILayout.Space(5);
-
             if (diag.Status == NetworkDiagnostics.TestStatus.Running)
             {
-                // Show progress bar
-                float progress = diag.TestProgress;
-                GUILayout.Label($"Testing... {progress * 100:F0}%", _labelStyle);
-
-                // Simple progress bar
-                GUILayout.BeginHorizontal();
-                GUILayout.Box("", GUILayout.Width(progress * 300), GUILayout.Height(20));
-                GUILayout.EndHorizontal();
+                var p = diag.TestProgress;
+                _testStatus.Content = $"Testing... {p * 100:F0}%";
+                _testProgressBar.Show();
+                _testProgressBar.SetValues(p, 1f);
+                _runTestButton.Interactable = false;
             }
             else
             {
-                // Run test button
-                if (GUILayout.Button("Run Network Test (5s)", _buttonStyle, GUILayout.Height(30)))
-                {
-                    diag.StartTest();
-                }
-            }
+                _testProgressBar.Hide();
+                _runTestButton.Interactable = true;
 
-            GUILayout.Space(10);
-
-            // Show results if available
-            if (diag.LastResults != null && diag.Status != NetworkDiagnostics.TestStatus.Running)
-            {
-                var results = diag.LastResults;
-
-                if (!results.Success)
-                {
-                    GUILayout.Label($"Test failed: {results.ErrorMessage}", _resultBadStyle);
-                    return;
-                }
-
-                // Overall result
-                GUILayout.Label("Results", _headerStyle);
-                var overallStyle = results.OverallResult <= NetworkDiagnostics.TestResult.Good ? _resultGoodStyle : _resultBadStyle;
-                GUILayout.Label($"Overall: {results.OverallResult} (Score: {results.QualityScore}/100)", overallStyle);
-                GUILayout.Space(5);
-
-                // Scrollable results area
-                _scrollPosition = GUILayout.BeginScrollView(_scrollPosition, GUILayout.Height(200));
-
-                // Latency
-                GUILayout.Label("Latency", _headerStyle);
-                var pingStyle = results.PingResult <= NetworkDiagnostics.TestResult.Good ? _resultGoodStyle : _resultBadStyle;
-                GUILayout.Label($"  Ping: {results.PingAverage:F1}ms ({results.PingResult})", pingStyle);
-                GUILayout.Label($"  Jitter: {results.PingJitter:F1}ms", _valueStyle);
-                GUILayout.Space(3);
-
-                // Bandwidth
-                GUILayout.Label("Bandwidth", _headerStyle);
-                var bwStyle = results.BandwidthResult <= NetworkDiagnostics.TestResult.Good ? _resultGoodStyle : _resultBadStyle;
-                GUILayout.Label($"  Send: {FormatBytes(results.SendRateAverage)}/s ({results.BandwidthResult})", bwStyle);
-                GUILayout.Label($"  Recv: {FormatBytes(results.RecvRateAverage)}/s", _valueStyle);
-                GUILayout.Label($"  Throughput: {FormatBytes(results.ThroughputBytesPerSecond)}/s", _valueStyle);
-                GUILayout.Space(3);
-
-                // World
-                GUILayout.Label("World State", _headerStyle);
-                var zdoStyle = results.ZdoResult <= NetworkDiagnostics.TestResult.Good ? _resultGoodStyle : _resultBadStyle;
-                GUILayout.Label($"  ZDO Count: {results.ZdoCount} ({results.ZdoResult})", zdoStyle);
-                GUILayout.Space(3);
-
-                // Compression
-                GUILayout.Label("Compression", _headerStyle);
-                GUILayout.Label($"  Enabled: {(results.CompressionEnabled ? "Yes" : "No")}", _valueStyle);
-                GUILayout.Label($"  Savings: {results.CompressionRatio:P1}", _valueStyle);
-
-                GUILayout.EndScrollView();
-            }
-            else if (diag.Status == NetworkDiagnostics.TestStatus.Idle)
-            {
-                GUILayout.Label("Click 'Run Network Test' to analyze", _labelStyle);
-                GUILayout.Label("your connection performance.", _labelStyle);
+                if (diag.LastResults != null)
+                    ShowResults(diag.LastResults);
+                else if (diag.Status == NetworkDiagnostics.TestStatus.Idle)
+                    _testStatus.Content = "Run test to analyze.";
             }
         }
 
-        private string FormatBytes(long bytes)
+        private void ShowResults(DiagnosticResults r)
         {
-            if (bytes >= 1048576)
-                return $"{bytes / 1048576.0:F2} MB";
-            if (bytes >= 1024)
-                return $"{bytes / 1024.0:F2} KB";
-            return $"{bytes} B";
+            if (!r.Success)
+            {
+                _testStatus.Content = $"Failed: {r.ErrorMessage}";
+                _testStatus.TextColor = VeneerColors.Error;
+                return;
+            }
+
+            var good = r.OverallResult <= NetworkDiagnostics.TestResult.Good;
+            _testStatus.Content = $"{r.OverallResult} ({r.QualityScore}/100)";
+            _testStatus.TextColor = good ? VeneerColors.Success : VeneerColors.Error;
+
+            var sb = new StringBuilder();
+            sb.AppendLine($"Ping: {r.PingAverage:F0}ms ({r.PingResult})");
+            sb.AppendLine($"Jitter: {r.PingJitter:F1}ms");
+            sb.AppendLine($"Send: {Fmt(r.SendRateAverage)}/s");
+            sb.AppendLine($"Recv: {Fmt(r.RecvRateAverage)}/s");
+            sb.AppendLine($"ZDOs: {r.ZdoCount} ({r.ZdoResult})");
+            sb.Append($"Compress: {r.CompressionRatio:P0}");
+
+            _testResultsText.Content = sb.ToString();
+            _testResultsText.TextColor = VeneerColors.Text;
+        }
+
+        private string Fmt(long bytes)
+        {
+            if (bytes >= 1048576) return $"{bytes / 1048576.0:F1}MB";
+            if (bytes >= 1024) return $"{bytes / 1024.0:F1}KB";
+            return $"{bytes}B";
         }
     }
 }

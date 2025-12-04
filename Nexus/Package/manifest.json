@@ -6,6 +6,8 @@
     "description": "Network optimization mod for Valheim multiplayer - configurable bandwidth limits, packet compression, and queue management to reduce lag and desync",
     "dependencies": [
         "denikson-BepInExPack_Valheim-5.4.2333",
-        "ValheimModding-Jotunn-2.26.1"
+        "ValheimModding-Jotunn-2.26.1",
+        "Slatyo-Munin-1.0.0",
+        "Slatyo-Veneer-1.0.0"
     ]
 }
