@@ -11,12 +11,12 @@ namespace Nexus
 {
     [BepInPlugin(PluginGUID, PluginName, PluginVersion)]
     [BepInDependency(Jotunn.Main.ModGuid)]
-    [BepInDependency("com.slaty.munin")]
+    [BepInDependency("com.slatyo.munin")]
     [BepInDependency("com.slatyo.veneer")]
     [NetworkCompatibility(CompatibilityLevel.EveryoneMustHaveMod, VersionStrictness.Minor)]
     public class Plugin : BaseUnityPlugin
     {
-        public const string PluginGUID = "com.nexus.valheim";
+        public const string PluginGUID = "com.slatyo.nexus";
         public const string PluginName = "Nexus";
         public const string PluginVersion = "1.0.0";
 
